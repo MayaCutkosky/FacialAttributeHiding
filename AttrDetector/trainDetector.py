@@ -8,7 +8,7 @@ Created on Thu Sep 28 08:58:04 2023
 
 
         
-
+import __init__
 
 from tensorflow.keras.applications import MobileNet, ResNet50
 
@@ -24,26 +24,31 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('model_archetecture', choices = ['MobileNet', 'ResNet50'])
-
+##ToDO: add dataset option and hyperparameter options.
 
 args = parser.parse_args()
 
 dset = CalebA(True, False)
 
 train_dset, val_dset = dset.get_dset('train'), dset.get_dset('val')
-
+from keras import Input, Model
+from keras.layers import Dense
 def load_model(args):
-    m = ResNet50(classes = 40,weights = None,input_shape=[218,178,3])
-    w = ResNet50().get_weights()
+    x = Input([218,178,3])
+    if args.model_archetecture == 'ResNet50':
+        y = ResNet50(input_shape=[218,178,3])(x)
+    elif args.model_archetecture == 'MobileNet':
+        m = MobileNet(classes = 40,weights = None,input_shape=[218,178,3])
+        w = MobileNet().get_weights()
 
-    w[-1] = w[-1][:40]
-    w[-2] = w[-2][:,:40]
-    m.set_weights(w) 
-    return m
+    y = Dense(40)(x)
+
+    return Model(x,y)
 
 m = load_model(args)
-m.compile(optimizer = optimizers.Adam(learning_rate = 0.004), loss =  'binary_crossentropy', metrics = 'binary_accuracy')
-m.fit(train_dset, validation_data = val_dset, callbacks = callbacks.ModelCheckpoint('ResNet50.h5',save_best_only=True, save_weigts_only = True, monitor = 'val_binary_accuracy', initial_value_threshold = .8), epochs = 100)
+if args.model_archetecture == 'ResNet50':
+    m.compile(optimizer = optimizers.Adam(learning_rate = 0.004), loss =  'binary_crossentropy', metrics = 'binary_accuracy')
+m.fit(train_dset, validation_data = val_dset, callbacks = callbacks.ModelCheckpoint(args.model_archetecture + '.h5',save_best_only=True, save_weigts_only = True, monitor = 'val_binary_accuracy', initial_value_threshold = .8), epochs = 100)
 
 
 
