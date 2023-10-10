@@ -11,7 +11,8 @@ from tensorflow.data import Dataset
 from tensorflow.io import read_file, decode_jpeg
 from tensorflow import cast, float32
 from tensorflow.image import resize
-
+from dlib import get_frontal_face_detector
+detector = get_frontal_face_detector()
 class CalebA():
     def __init__(self, attributes, identities, directory = '/home/maya/Desktop/datasets/Celeba/'):
         self.identities = identities
@@ -38,7 +39,6 @@ class CalebA():
             end = 0
         #randomly shuffle dataset
         random_shuffle = np.random.permutation(len(im_files))
-        
 
         #image file names
         im_files = np.char.zfill(im_files.astype('S6'),6)[random_shuffle]
@@ -56,22 +56,21 @@ class CalebA():
         def load_image(im):
             f = read_file(self.dir + 'img_align_celeba/'  + im + '.jpg')
             im = decode_jpeg(f)
-            im = cast(im, float32)/256
             return im
         
         
         def center_and_resize_image(im):
             # dim_x, dim_y = data[1]
             # crop_size = ((dim_x - dim_y))//2
-            im = im[20:198]
-            # im = resize(im, self.input_shape[:2])
+            im = im[24:194,4:174]
+            im = resize(im, self.input_shape[:2])
             return im
         
         #create dataset
         x_dset = Dataset.from_tensor_slices(im_files)
         x_dset = x_dset.map(load_image)
         
-        #x_dset = x_dset.map(center_and_resize_image)
+        x_dset = x_dset.map(center_and_resize_image)
         
         y_dset = Dataset.from_tensor_slices(attr)
         
