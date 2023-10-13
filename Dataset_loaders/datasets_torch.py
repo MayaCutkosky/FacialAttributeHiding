@@ -7,23 +7,47 @@ Created on Sat Sep 30 09:43:43 2023
 """
 
 import numpy as np
+from torch import empty, float32, from_numpy
 from torch.utils.data import Dataset
 from torchvision.io import read_image
-
+from threading import Thread
+from torchvision import transforms
 
 class CelebA(Dataset):
-    def __init__(self, attributes=True, identities=True, batch_size = 32,
-                 cuda = True, directory = '/home/maya/Desktop/datasets/Celeba/'):
+    def __init__(self, attributes=True, identities=False, batch_size = 32,
+                 cuda = True, directory = '/home/maya/Desktop/datasets/Celeba/', attr_format='0,1'):
+        '''
+        
+
+        Parameters
+        ----------
+        attributes : TYPE, list of ints or bool
+            DESCRIPTION. The default is True.
+        identities : TYPE, Bool
+            DESCRIPTION. Currently does nothing. Option will be added later
+        batch_size : TYPE, int
+            DESCRIPTION. The default is 32.
+        cuda : TYPE, bool
+            DESCRIPTION. The default is True.
+        directory : TYPE, string
+            DESCRIPTION. The default is '/home/maya/Desktop/datasets/Celeba/'.
+
+        Returns
+        -------
+        None.
+
+        '''
         
         self.identities = identities
-        self.input_shape = [224, 224, 3]
+        self.input_shape = [3,224, 224]
         self.batch_size = batch_size
         self.dir = directory
         self.cuda = cuda
         
         self.num_threads = 8
-        self.preloaded_images = torch.empty(size = [batch_size]+self.input_shape, dtype = torch.float32)
-        self.preload_images()
+        #if self.cuda:
+        #    self.preloaded_images = empty(size = [batch_size]+self.input_shape, dtype = float32).cuda()
+        #self.preload_dset()
         
         
         if identities:
@@ -36,9 +60,12 @@ class CelebA(Dataset):
                 attributes = []
             
         if len(attributes):
-            self.attr = (np.genfromtxt(self.dir + 'list_attr_celeba.txt',skip_header=2, usecols=attributes)) + 1) // 2
+            self.attr = from_numpy(np.genfromtxt(self.dir + 'list_attr_celeba.txt',skip_header=2, usecols=attributes))
+            if attr_format == '0,1':
+                self.attr = (self.attr+ 1) // 2
+            
+            
 
-        
     def __get_next__(self,idx):
         '''Used to get images for images
 
@@ -53,56 +80,54 @@ class CelebA(Dataset):
             DESCRIPTION.
 
         '''
-        return get_sample(idx)
+        return self.get_sample(idx)
 
-    def preload_images(self,idx):
+    def preload_dset(self,idx=None):
+        if idx == None:
+            idx = np.random.choice(np.arange(1,202599),self.batch_size,False)
+        self.preloaded_idx = idx
         #load images
         self.threads = []
-        for idx_lst in np.array_split(range(self.batch_size), self.num_threads):
-            Thread(target=self.theaded_load_image,args= [idx_list])
+        for i, idx_lst in enumerate(np.array_split(idx, self.num_threads)):
+            Thread(target=self.threaded_load_image,args= [idx_lst,i]).start()
+        
             
         
     
-    def threaded_load_image(self, idx_list):
-        for i in idx_list:
-            self.preloaded_images[i] = self.load_image(i)
+    def threaded_load_image(self, idx_list, sample_num):
+
+        for i,j in enumerate(idx_list):
+            self.preloaded_images[sample_num*self.batch_size//self.num_threads + i] = self.load_image(j)
+        
         
         
     def load_image(self,idx):
         idx = str(idx).zfill(6)
-        im = read_image(self.dir + 'img_align_celeba/'  + idx + '.jpg')
-        return im.cuda() 
+        im = read_image(self.dir + 'img_align_celeba/'  + idx + '.jpg').cuda()
+        im = transforms.Compose((
+            transforms.CenterCrop([170,170]),
+            transforms.Resize(size=(224, 224), antialias=True)
+            ))(im)
+        return im
     
     
     def get_sample(self, idx = None, attr = False, identity = False, partition = 'train'):
         if idx == None:
-            
-            
-        self.preload_dset()
-        return self.preloaded_images
+            idx = np.random.choice(np.arange(1,202599),self.batch_size,False)
+        sample = empty(size = [self.batch_size]+self.input_shape, dtype = float32).cuda()
+        for i,j in enumerate(idx):
+            sample[i] = self.load_image(j)
+        sample = [sample]
+        if attr:
+            sample.append(self.attr[idx].cuda())
+        if identity:
+            sample.append(self.identity[self.preloaded_idx])
+        
+        #self.preload_dset()
+        
+        return tuple(sample)
 
         
-        
-        def center_and_resize_image(im):
-            # dim_x, dim_y = data[1]
-            # crop_size = ((dim_x - dim_y))//2
-            im = im[20:198]
-            # im = resize(im, self.input_shape[:2])
-            return im
-        
-        #create dataset
-        x_dset = Dataset.from_tensor_slices(im_files)
-        x_dset = x_dset.map(load_image)
-        
-        #x_dset = x_dset.map(center_and_resize_image)
-        
-        y_dset = Dataset.from_tensor_slices(attr)
-        
-        dset = Dataset.zip((x_dset,y_dset))
-        dset = dset.batch(32)
-        dset = dset.prefetch(4)
-        
-        dset 
 
 attr_names = ['5 o Clock Shadow', 'Arched Eyebrows', 'Attractive',
            'Bags Under Eyes', 'Bald', 'Bangs', 'Big Lips', 'Big Nose',
@@ -115,3 +140,7 @@ attr_names = ['5 o Clock Shadow', 'Arched Eyebrows', 'Attractive',
            'Straight Hair', 'Wavy Hair', 'Wearing Earrings',
            'Wearing Hat', 'Wearing Lipstick', 'Wearing Necklace',
            'Wearing Necktie', 'Young']
+
+if __name__ == '__main__':
+    dset = CelebA()
+    
