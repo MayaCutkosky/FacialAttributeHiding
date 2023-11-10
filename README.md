@@ -8,3 +8,7 @@ Previous attempts at facial feature concealment often compromised image quality.
 
 ## Problem Statement
 This project addresses the challenge of developing an algorithm that takes an input face image and produces a protected image with specific properties. The algorithm aims to preserve image similarity, maintain compatibility with non-attribute machine learning tests, and obfuscate facial attributes effectively. Our solution is designed to outperform existing methods in meeting these criteria, emphasizing the importance of balancing privacy protection and machine learning system functionality.
+
+
+## Dataset
+https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
