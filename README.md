@@ -12,3 +12,14 @@ This project addresses the challenge of developing an algorithm that takes an in
 
 ## Dataset
 https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
+
+
+## Train Attribute Detector
+Detector models can be trained with the trainDetector.py in the AttrDetector directory.
+
+```python
+  trainDetector.py [Model Name]
+```
+Possible models are ResNet50 and MobileNet
+
+
