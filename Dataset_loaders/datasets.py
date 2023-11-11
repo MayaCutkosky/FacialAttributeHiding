@@ -91,3 +91,5 @@ attr_names = ['5 o Clock Shadow', 'Arched Eyebrows', 'Attractive',
            'Straight Hair', 'Wavy Hair', 'Wearing Earrings',
            'Wearing Hat', 'Wearing Lipstick', 'Wearing Necklace',
            'Wearing Necktie', 'Young']
+
+

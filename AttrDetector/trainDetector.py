@@ -7,7 +7,6 @@ Created on Thu Sep 28 08:58:04 2023
 """
 
 
-        
 
 import __init__
 from tensorflow.keras.applications import MobileNet, ResNet50
@@ -24,15 +23,17 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('model_archetecture', choices = ['MobileNet', 'ResNet50'])
-
+##ToDO: add dataset option and hyperparameter options.
 
 args = parser.parse_args()
 
 dset = CalebA(True, False)
 
 train_dset, val_dset = dset.get_dset('train'), dset.get_dset('val')
-
+from keras import Input, Model
+from keras.layers import Dense
 def load_model(args):
+
     if args.model_archetecture == 'ResNet50':
         m = ResNet50(classes = 40,weights = None,input_shape=[224,224,3], classifier_activation = 'sigmoid')
         w = ResNet50(classifier_activation = None).get_weights()
@@ -49,6 +50,7 @@ def load_model(args):
 m = load_model(args)
 m.compile(optimizer = optimizers.Adam(learning_rate = 0.006), loss =  'binary_crossentropy', metrics = 'accuracy')
 m.fit(train_dset, validation_data = val_dset, callbacks = callbacks.ModelCheckpoint(args.model_archetecture + '50_170by170to224by224.h5',save_best_only=True, save_weights_only = True, monitor = 'val_accuracy', initial_value_threshold = .5), epochs = 100)
+
 
 
 
