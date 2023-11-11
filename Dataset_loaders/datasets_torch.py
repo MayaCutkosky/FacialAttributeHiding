@@ -112,8 +112,8 @@ class CelebA(Dataset):
     
     
     def get_sample(self, idx = None, attr = False, identity = False, partition = 'train'):
-        if idx == None:
-            idx = np.random.choice(np.arange(1,202599),self.batch_size,False)
+        if idx is None:
+            idx = np.random.choice(np.arange(202598),self.batch_size,False)
         sample = empty(size = [self.batch_size]+self.input_shape, dtype = float32, requires_grad=True).cuda()
         for i,j in enumerate(idx):
             sample[i] = self.load_image(j+1)
