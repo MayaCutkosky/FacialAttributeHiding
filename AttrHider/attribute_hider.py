@@ -70,7 +70,7 @@ class AttrHider():
                 nn.LeakyReLU(),
                 nn.MaxPool2d(7),
                 nn.Flatten(),
-                nn.Linear(1024,5)
+                nn.Linear(1024,1)
             )
     
     class Generator(nn.Module):
@@ -116,7 +116,7 @@ class AttrHider():
         self.identifier = facenet().requires_grad_(False).cuda()
         self.optimizer_D = torch.optim.Adam(chain(self.detector.parameters(),self.classifier.parameters()),
                                             lr = 0.02, betas=(0.5,0.99) )
-        self.optimizer_G = torch.optim.Adam(self.generator.parameters(), lr = 0.002,betas=(0.5,0.99))
+        self.optimizer_G = torch.optim.Adam(self.generator.parameters(), lr = 0.02,betas=(0.5,0.99))
         
         transform = transforms.Compose((transforms.ToTensor(),
             transforms.CenterCrop([170,170]),
@@ -128,7 +128,7 @@ class AttrHider():
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, shuffle = True)
         self.G_loss = Metric()
         self.D_loss = Metric()
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = nn.BCEWithLogitsLoss()
         def acc(y_true, y_pred): 
             return np.mean(y_true==(y_pred>0.5))  
         self.acc_metric = Metric(acc)
@@ -137,22 +137,22 @@ class AttrHider():
     def train_step(self,n=5):        
          
         def calc_gradient(network, orig_images, protected_images):
-            epsilon = torch.tile(torch.rand(len(orig_images),device = 'cuda'),[224,224,3,5]).T
+            epsilon = torch.tile(torch.rand(len(orig_images),device = 'cuda'),[224,224,3,1]).T
             merged_images = epsilon * orig_images + (1-epsilon) * protected_images
-            network(merged_images).backward(gradient = torch.ones([len(merged_images),5],device = 'cuda'),inputs = merged_images)
+            network(merged_images).backward(gradient = torch.ones([len(merged_images),1],device = 'cuda'),inputs = merged_images)
             return merged_images.grad
 
 
         for i, (x,y) in enumerate(self.dataloader):
             self.optimizer_D.zero_grad()
+            
 
             orig_images = x.to('cuda')
-            classifications = y.type(torch.float)[:,:5].to('cuda')
+            classifications = y.type(torch.float)[:,6].to('cuda')
             if i > n:
                 break
             protected_images = self.generator(orig_images)
             
-
 
             
             grad_x = calc_gradient(self.detector, orig_images, protected_images)
@@ -163,13 +163,16 @@ class AttrHider():
             loss = self.detector(protected_images) - self.detector(orig_images) 
             
             loss += gradient_penalty
+            ind_has_attr = classifications == 1
+            num_with_attr = int(classifications.sum().detach())
             
-            # ind_has_attr = classifications == 1
-            #with attribute 
-            # w = 1+0*ind_has_attr
-            attr_loss = self.loss_fn(self.classifier(protected_images), classifications) + self.loss_fn(self.classifier(orig_images), classifications)
-            # attr_loss = nn.functional.binary_cross_entropy_with_logits(self.classifier(protected_images),classifications,w)+nn.functional.binary_cross_entropy_with_logits(self.classifier(orig_images),classifications,w) # 2-self.classifier(protected_images[ind_has_attr]) - self.classifier(orig_images[ind_has_attr]) 
-            #no_attr_loss = self.classifier(protected_images[~ind_has_attr]) + self.classifier(orig_images[~ind_has_attr]) 
+            orig_images_attr = self.classifier(orig_images).flatten()
+            protected_images_attr = self.classifier(protected_images).flatten()
+            attr_loss = 4.15289536 * self.loss_fn(protected_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda')) 
+            attr_loss += 4.15289536 * self.loss_fn(orig_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda'))
+            attr_loss += 1.31716879 * self.loss_fn(protected_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda')) 
+            attr_loss += 1.31716879 * self.loss_fn(orig_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda'))
+ 
             
 
             loss = torch.mean(loss)
@@ -186,27 +189,28 @@ class AttrHider():
         protected_images = self.generator(orig_images)
         protected_images_id_features = self.identifier(protected_images)
         orig_images_id_features = self.identifier(orig_images)
-        protected_image_classifications = self.classifier(protected_images)
+        protected_image_classifications = self.classifier(protected_images).flatten()
         
         loss = - self.detector(protected_images) - self.loss_fn(protected_image_classifications, classifications)
-
+        loss = torch.mean(loss)
 #        loss += -nn.functional.binary_cross_entropy_with_logits(protected_images_attr, classifications)
         loss += nn.functional.mse_loss(protected_images_id_features, orig_images_id_features)
         
-        loss = torch.mean(loss)
         loss.backward()
         #self.optimizer_G.step()
         self.G_loss.update(loss.detach().cpu().numpy())
-        self.acc_metric.update(self.classifier(orig_images).detach().cpu().numpy(),  classifications.cpu().numpy())
-        self.hidden_acc_metric.update(protected_image_classifications.detach().cpu().numpy(), classifications.cpu().numpy())
+        self.acc_metric.update( classifications.cpu().numpy(), self.classifier(orig_images).flatten().detach().cpu().numpy())
+        self.hidden_acc_metric.update( classifications.cpu().numpy(), protected_image_classifications.detach().cpu().numpy())
     
 
 
-    def train(self, steps = 100000, **kwargs):
+    def train(self, steps = 100000, verbose = True,**kwargs):
         for i in range(steps):
             self.train_step(**kwargs)
-            if i%100 == 0:
-                print(i, self.D_loss.output(), self.G_loss.output(), self.acc_metric.output(), self.hidden_acc_metric.output())
+            if verbose:
+                print('i Discriminator Loss   Generator Loss  AccOrig AccProtected')
+                if i%100 == 0:
+                    print(i, self.D_loss.output(), self.G_loss.output(), self.acc_metric.output(), self.hidden_acc_metric.output())
                 
 
 
@@ -214,3 +218,4 @@ class AttrHider():
 
 if __name__ == '__main__':
     m = AttrHider()
+    m.train()
