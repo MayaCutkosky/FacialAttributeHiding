@@ -21,6 +21,13 @@ Identifier:
     Output: (correct) identity
     Probably frozen.
     
+    
+    
+Steps:
+    1. train classifier
+    2. train generator/disciminator
+    3. train everything
+    
 """
 # from sys import path as syspath
 # from os.path import abspath
@@ -123,16 +130,17 @@ class AttrHider():
         self.generator = self.Generator().cuda()
         self.identifier = facenet().requires_grad_(False).cuda()
         self.optimizer_D = torch.optim.Adam(chain(self.discriminator.parameters(),self.classifier.parameters()),
-                                            lr = 0.02, betas=(0.5,0.99) )
+                                            lr = 0.002, betas=(0.5,0.99) )
         self.optimizer_G = torch.optim.Adam(self.generator.parameters(), lr = 0.02,betas=(0.5,0.99))
         
         #Training hyperparameters
         self.gradient_coeff = 0
-        self.classifier_coeff = 0
-        self.discriminator_coeff = 1
-        self.generator_vs_discriminator_coeff = 0.01
-        self.generator_vs_classifier_coeff = 1
-        self.id_coeff = 1
+        self.classifier_coeff = 1
+        self.protected_image_classifier_coeff = 0
+        self.discriminator_coeff = 0
+        self.generator_vs_discriminator_coeff = 0
+        self.generator_vs_classifier_coeff = 0
+        self.id_coeff = 0
         
         
         #Get dataset
@@ -141,7 +149,7 @@ class AttrHider():
             transforms.Resize(size=(224, 224), antialias=True), 
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
             ))
-        dataset = torch.utils.data.Subset(CelebA('/home/maya/Desktop/datasets/',transform=transform), np.arange(3200))
+        dataset = CelebA('/home/maya/Desktop/datasets/',transform=transform)
         
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, shuffle = True)
 
@@ -169,10 +177,6 @@ class AttrHider():
     
     def train_step(self,n=6):
 
-        #For troubleshooting purposes        
-        train_classifier = True
-        train_discriminator = True
-        train_generator = True
         
         def calc_gradient(network, orig_images, protected_images):
             epsilon = torch.rand(len(orig_images),1,1,1,device = 'cuda').expand(-1,3,224,224)
@@ -191,70 +195,65 @@ class AttrHider():
             protected_images = self.generator(orig_images)
             
             loss = 0
-            if train_discriminator:
-                grad_x = calc_gradient(self.discriminator, orig_images, protected_images)
-                gradient_penalty = self.gradient_coeff * torch.square(torch.norm(grad_x,2, dim=1) - 1).mean()               
+            grad_x = calc_gradient(self.discriminator, orig_images, protected_images)
+            gradient_penalty = self.gradient_coeff * torch.square(torch.norm(grad_x,2, dim=1) - 1).mean()               
+            
                 
-                    
-                disc_loss = self.discriminator(protected_images) - self.discriminator(orig_images) 
-                
-                disc_loss += gradient_penalty
-                disc_loss = disc_loss.mean()
-                loss += self.discriminator_coeff * disc_loss
+            disc_loss = self.discriminator(protected_images) - self.discriminator(orig_images) 
+            
+            disc_loss += gradient_penalty
+            disc_loss = disc_loss.mean()
+            loss += self.discriminator_coeff * disc_loss
             
             
-            if train_classifier:
-                ind_has_attr = classifications == 1
-                num_with_attr = int(classifications.sum().detach())
-                if num_with_attr > 0  and num_with_attr < 32:
-                    orig_images_attr = self.classifier(orig_images).flatten()
-                    protected_images_attr = self.classifier(protected_images).flatten()
-                    attr_loss = 0.1*4.15289536 * self.loss_fn(protected_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda')) 
-                    attr_loss += 4.15289536 * self.loss_fn(orig_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda'))**2
-                    attr_loss += 0.1*1.31716879 * self.loss_fn(protected_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda')) 
-                    attr_loss += 1.31716879 * self.loss_fn(orig_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda'))**2
-                    loss += self.classifier_coeff * attr_loss
-                else:
-                    continue
+            ind_has_attr = classifications == 1
+            num_with_attr = int(classifications.sum().detach())
+            if num_with_attr > 0  and num_with_attr < 32:
+                orig_images_attr = self.classifier(orig_images).flatten()
+                protected_images_attr = self.classifier(protected_images).flatten()
+                attr_loss = self.protected_image_classifier_coeff*0.4527663019067221 * self.loss_fn(protected_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda')) 
+                attr_loss += 0.4527663019067221* self.loss_fn(orig_images_attr[ind_has_attr], torch.ones((num_with_attr),device='cuda'))
+                attr_loss += self.protected_image_classifier_coeff*0.5472336980932778 * self.loss_fn(protected_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda')) 
+                attr_loss += 0.5472336980932778* self.loss_fn(orig_images_attr[~ind_has_attr], torch.zeros((len(ind_has_attr) - num_with_attr),device='cuda'))
+                loss += self.classifier_coeff * attr_loss
+            else:
+                continue
             
 
-            if train_classifier or train_discriminator:
             
-                loss.backward()
-                self.optimizer_D.step()
-                self.D_loss.update(loss.detach().cpu().numpy())
-                
-                #update writer
-                if train_discriminator:
-                    self.writer.add_scalar('loss_discriminator', disc_loss.detach().cpu().numpy(), self.step)
-                if train_classifier:
-                    self.writer.add_scalar('loss_classifier', attr_loss.detach().cpu().numpy(), self.step)
-                    self.writer.add_histogram('classifier_output', orig_images_attr,self.step)
+            loss.backward()
+            self.optimizer_D.step()
+            self.D_loss.update(loss.detach().cpu().numpy())
+            
+            #update writer
+            self.writer.add_scalar('loss_discriminator', disc_loss.detach().cpu().numpy(), self.step)
+            self.writer.add_scalar('loss_classifier', attr_loss.detach().cpu().numpy(), self.step)
+            self.writer.add_histogram('classifier_output', orig_images_attr,self.step)
+            self.writer.add_histogram('current_classifier_output', orig_images_attr)
             self.step += 1
             
         
-        if train_generator:
-            self._zero_grad()
-            
-            
-            protected_images = self.generator(orig_images)
-            protected_images_id_features = self.identifier(protected_images)
-            orig_images_id_features = self.identifier(orig_images)
-            protected_image_classifications = self.classifier(protected_images).flatten()
-            
-            G_loss = - self.discriminator(protected_images).mean() 
-            attr_loss = - self.loss_fn(protected_image_classifications, classifications)
-            id_loss = self.identity_loss_fn(protected_images_id_features, orig_images_id_features,torch.ones(1).cuda())
-            loss = self.generator_vs_discriminator_coeff * G_loss + self.generator_vs_classifier_coeff * attr_loss + self.id_coeff * id_loss
-            loss.backward()
-            self.optimizer_G.step()
-            self.G_loss.update(loss.detach().cpu().numpy())
-            self.acc_metric.update( classifications.cpu().numpy(), self.classifier(orig_images).flatten().detach().cpu().numpy())
-            self.hidden_acc_metric.update( classifications.cpu().numpy(), protected_image_classifications.detach().cpu().numpy())
-            self.writer.add_scalar('loss_confuse_discriminator', G_loss.detach().cpu().numpy(), self.step)
-            self.writer.add_scalar('loss_confuse_classifier', attr_loss.detach().cpu().numpy(), self.step)
-            self.writer.add_scalar('loss_id', id_loss.detach().cpu().numpy(), self.step)
-            
+        self._zero_grad()
+        
+        
+        protected_images = self.generator(orig_images)
+        protected_images_id_features = self.identifier(protected_images)
+        orig_images_id_features = self.identifier(orig_images)
+        protected_image_classifications = self.classifier(protected_images).flatten()
+        
+        G_loss = - self.discriminator(protected_images).mean() 
+        attr_loss = - self.loss_fn(protected_image_classifications, classifications)
+        id_loss = self.identity_loss_fn(protected_images_id_features, orig_images_id_features,torch.ones(1).cuda())
+        loss = self.generator_vs_discriminator_coeff * G_loss + self.generator_vs_classifier_coeff * attr_loss + self.id_coeff * id_loss
+        loss.backward()
+        self.optimizer_G.step()
+        self.G_loss.update(loss.detach().cpu().numpy())
+        self.acc_metric.update( classifications.cpu().numpy(), self.classifier(orig_images).flatten().detach().cpu().numpy())
+        self.hidden_acc_metric.update( classifications.cpu().numpy(), protected_image_classifications.detach().cpu().numpy())
+        self.writer.add_scalar('loss_confuse_discriminator', G_loss.detach().cpu().numpy(), self.step)
+        self.writer.add_scalar('loss_confuse_classifier', attr_loss.detach().cpu().numpy(), self.step)
+        self.writer.add_scalar('loss_id', id_loss.detach().cpu().numpy(), self.step)
+        
     
 
 
@@ -272,3 +271,4 @@ class AttrHider():
 
 if __name__ == '__main__':
     m = AttrHider()
+    m.train()
