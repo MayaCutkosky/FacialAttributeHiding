@@ -22,12 +22,12 @@ Identifier:
     Probably frozen.
     
     
-    
+        
+
 Steps:
-    1. train classifier
-    2. train generator/disciminator
-    3. train everything
-    
+    1. train classifier [1,0,0,0,0,0,0]
+    2. train generator/disciminator [0,0,1,10,1,0,0]
+
 """
 # from sys import path as syspath
 # from os.path import abspath
@@ -53,7 +53,7 @@ class Metric:
         self.scoring_fun = scoring_fun
     def update(self, *args):
         score = self.scoring_fun(*args)
-        self.running_score = self.running_score * 0.8 + score * 0.2
+        self.running_score = self.running_score * 0.7 + score * 0.3
     def output(self):
         return self.running_score
 
@@ -111,16 +111,34 @@ class AttrHider():
             
         def forward(self, x):
             #x,r = x
+            encoder_outputs = [] #For skip connections
             for l in self.encoder_layers:
                 x = l(x)
+                encoder_outputs.append(x)
             #set x between 0 and 1
             x = self.norm_layer(x)
             x = torch.abs(torch.rand(len(x),1024,7,7, device = 'cuda') - x)
             for l in self.decoder_layers:
-                x = l(x)
+                x = torch.concatenate([x,encoder_outputs.pop()],1)
+                x = l[0](x)
             return x
     
-    def __init__(self, savedir = 'Output', restart = False):
+    def __init__(self, savedir = 'Output', attr_id = -1):
+        '''
+        
+
+        Parameters
+        ----------
+        savedir : str, optional
+            Directory that checkpoint files and tensorboard info is saved to. The default is 'Output'.
+        attr_id : int, optional
+            Attribute that is being loaded. The default is -1.
+
+        Returns
+        -------
+        AttrHider object (for training attribute hider)
+
+        '''
         
         #Build networks
         self.classifier = self.Encoder()
@@ -151,7 +169,7 @@ class AttrHider():
             ))
         dataset = CelebA('/home/maya/Desktop/datasets/',transform=transform)
         
-        self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, shuffle = True)
+        self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, sampler=torch.utils.data.RandomSampler(replacement=True))
 
         #Build Metrics
         self.G_loss = Metric()
@@ -164,11 +182,21 @@ class AttrHider():
         self.hidden_acc_metric = Metric(acc)
         
         #Set up/load from save directory
+        self.savedir = savedir
         
-        self.step = 0 
+        #set up tensorboard
+        self._step = 0 
         self.writer = SummaryWriter(savedir)
         
         
+        #Other variables
+        self._attr_id = attr_id
+        
+        
+    def get_config(self):
+        return {
+                'attr_id' : self._attr_id                
+            }
     
     def _zero_grad(self):
         self.classifier.zero_grad()
@@ -189,7 +217,7 @@ class AttrHider():
             
 
             orig_images = x.to('cuda')
-            classifications = y.type(torch.float)[:,-1].to('cuda')
+            classifications = y.type(torch.float)[:,self._attr_id].to('cuda')
             if i >= n:
                 break
             protected_images = self.generator(orig_images)
@@ -226,11 +254,16 @@ class AttrHider():
             self.D_loss.update(loss.detach().cpu().numpy())
             
             #update writer
-            self.writer.add_scalar('loss_discriminator', disc_loss.detach().cpu().numpy(), self.step)
-            self.writer.add_scalar('loss_classifier', attr_loss.detach().cpu().numpy(), self.step)
-            self.writer.add_histogram('classifier_output', orig_images_attr,self.step)
-            self.writer.add_histogram('current_classifier_output', orig_images_attr)
-            self.step += 1
+            self.writer.add_scalar('loss_discriminator', disc_loss.detach().cpu().numpy(), self._step)
+            self.writer.add_scalar('loss_classifier', attr_loss.detach().cpu().numpy(), self._step)
+            self._step += 1
+            
+            if self._step%10 == 0: #update every 10 steps
+                self.writer.add_histogram('classifier_output', orig_images_attr,self._step)
+                self.writer.add_histogram('current_classifier_output', orig_images_attr)
+            if self._step%100 == 0: #update every 100 steps
+                self.writer.add_image('generated_image', protected_images[0],self._step)
+                self.writer.add_image('original_image', orig_images[0],self._step)
             
         
         self._zero_grad()
@@ -250,25 +283,81 @@ class AttrHider():
         self.G_loss.update(loss.detach().cpu().numpy())
         self.acc_metric.update( classifications.cpu().numpy(), self.classifier(orig_images).flatten().detach().cpu().numpy())
         self.hidden_acc_metric.update( classifications.cpu().numpy(), protected_image_classifications.detach().cpu().numpy())
-        self.writer.add_scalar('loss_confuse_discriminator', G_loss.detach().cpu().numpy(), self.step)
-        self.writer.add_scalar('loss_confuse_classifier', attr_loss.detach().cpu().numpy(), self.step)
-        self.writer.add_scalar('loss_id', id_loss.detach().cpu().numpy(), self.step)
+        
+        #update writer
+        self.writer.add_scalar('loss_confuse_discriminator', G_loss.detach().cpu().numpy(), self._step)
+        self.writer.add_scalar('loss_confuse_classifier', attr_loss.detach().cpu().numpy(), self._step)
+        self.writer.add_scalar('loss_id', id_loss.detach().cpu().numpy(), self._step)
         
     
+    def train(self, steps = 100000, verbose = True, save_chkpt_freq = 0, **kwargs):
+        '''
+        
 
+        Parameters
+        ----------
+        steps : int, optional
+            Number of iterations that one trains. The default is 100000.
+        verbose : bool, optional
+            Whether to print out parameters. The default is True.
+        save_chkpt_freq : TYPE, optional
+            How often to save checkpoint files. The default value (0) represents no saving checkpoint files.
+        **kwargs : 
+            Parameters to feed to self.train_step
 
-    def train(self, steps = 100000, verbose = True,**kwargs):
+        Returns
+        -------
+        None.
+
+        '''
         if verbose:
             print('i Discriminator Loss   Generator Loss  AccOrig AccProtected')
         for i in range(steps):
             self.train_step(**kwargs)
+            if save_chkpt_freq:
+                if i%save_chkpt_freq == 0:
+                    self.save(str(self._step)+'.pt')
+                    
             if i%100 == 0:
                 if verbose:
                     print(i, self.D_loss.output(), self.G_loss.output(), self.acc_metric.output(), self.hidden_acc_metric.output())
 
 
-
+    def change_coeff(self, coeffs):
+        self.classifier_coeff = coeffs[0]
+        self.protected_image_classifier_coeff = coeffs[1]
+        self.discriminator_coeff = coeffs[2]
+        self.gradient_coeff = coeffs[3]
+        self.generator_vs_discriminator_coeff = coeffs[4]
+        self.generator_vs_classifier_coeff = coeffs[5]
+        self.id_coeff = coeffs[6]
+    
+    def save(self, filename=None):
+        if filename is None:
+            filename = 'GAN.pt'
+        torch.save([
+                self.classifier.state_dict(),
+                self.discriminator.state_dict(),
+                self.generator.state_dict(),
+                self.optimizer_D.state_dict(),
+                self.optimizer_G.state_dict()
+            ], pathjoin(self.savedir, filename) )
+    
+    def load(self, filename=None):
+        params = torch.load(filename)
+        self.optimizer_G.load_state_dict(params.pop())
+        self.optimizer_D.load_state_dict(params.pop())
+        self.generator.load_state_dict(params.pop())
+        self.discriminator.load_state_dict(params.pop())
+        self.classifier.load_state_dict(params.pop())
+        
 
 if __name__ == '__main__':
     m = AttrHider()
+    #Train classifier
+    m.change_coeff([1,0,0,0,0,0,0])
+    m.train(5000)
+    #Try to get a realistic image
+    #    The discriminator trains much better than the generator. How to solve this? Decrease n, Increase gradient penalty? Decrease discriminator loss (Increasing generator loss will likely not help)
+    m.change_coeff([0,0,1,10,1,0,1])
     m.train()
