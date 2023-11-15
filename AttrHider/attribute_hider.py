@@ -90,37 +90,46 @@ class AttrHider():
             self.encoder_layers = nn.ModuleList()
             self.decoder_layers = nn.ModuleList()
             channels = [3, 64, 128, 256, 512, 1024]
-            for i in range(5):
-                
+            for i in range(5): 
+                if i == 4:
+                    pad = 0
+                else:
+                    pad = 1
                 self.encoder_layers.append(nn.Sequential(
-                        nn.Conv2d(channels[i], channels[i+1], 4, 2, padding = 1),
+                        nn.Conv2d(channels[i], channels[i+1], 4, 2, padding = pad),
                         nn.InstanceNorm2d(channels[i+1]),
                         nn.LeakyReLU()
                     ))
-                self.decoder_layers.append(nn.Sequential(
-                        nn.ConvTranspose2d(channels[-i-1],channels[-i-2], 4, 2, padding = 1),
-                        nn.InstanceNorm2d(channels[-i-2]),
-                        nn.LeakyReLU()
-                    ))
+                if i == 0:
+                    pad = 0
+                else:
+                    pad = 1
+                self.decoder_layers.append(nn.ModuleList((
+                        nn.ConvTranspose2d(channels[-i-1],channels[-i-2], 4, 2, padding = pad),
+                        nn.Sequential(nn.Conv2d(channels[-i-2]*2,channels[-i-2], 3, padding = 1),
+                                      nn.InstanceNorm2d(channels[-i-2]),
+                                      nn.LeakyReLU()
+                                      )
+                    )))
             self.norm_layer = nn.Sequential(
                     nn.Flatten(),
-                    nn.BatchNorm1d(1024*7*7, affine=False),
-                    nn.Unflatten(1,(1024,7,7))
+                    nn.BatchNorm1d(1024*6*6, affine=False),
+                    nn.Unflatten(1,(1024,6,6))
                 )
 
             
         def forward(self, x):
-            #x,r = x
-            encoder_outputs = [] #For skip connections
+            encoder_inputs = [] #For skip connections
             for l in self.encoder_layers:
+                encoder_inputs.append(x)
                 x = l(x)
-                encoder_outputs.append(x)
             #set x between 0 and 1
             x = self.norm_layer(x)
-            x = torch.abs(torch.rand(len(x),1024,7,7, device = 'cuda') - x)
+            x = torch.abs(x - torch.rand(len(x),1024,6,6, device = 'cuda') )
             for l in self.decoder_layers:
-                x = torch.concatenate([x,encoder_outputs.pop()],1)
                 x = l[0](x)
+                x = torch.concatenate([x,encoder_inputs.pop()],1)
+                x = l[1](x)
             return x
     
     def __init__(self, savedir = 'Output', attr_id = -1):
@@ -169,7 +178,7 @@ class AttrHider():
             ))
         dataset = CelebA('/home/maya/Desktop/datasets/',transform=transform)
         
-        self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, sampler=torch.utils.data.RandomSampler(replacement=True))
+        self.dataloader = torch.utils.data.DataLoader(dataset, batch_size = 32, num_workers = 2, shuffle = True)
 
         #Build Metrics
         self.G_loss = Metric()
@@ -354,10 +363,10 @@ class AttrHider():
 
 if __name__ == '__main__':
     m = AttrHider()
-    #Train classifier
-    m.change_coeff([1,0,0,0,0,0,0])
-    m.train(5000)
-    #Try to get a realistic image
-    #    The discriminator trains much better than the generator. How to solve this? Decrease n, Increase gradient penalty? Decrease discriminator loss (Increasing generator loss will likely not help)
-    m.change_coeff([0,0,1,10,1,0,1])
-    m.train()
+    # #Train classifier
+    # m.change_coeff([1,0,0,0,0,0,0])
+    # m.train(5000)
+    # #Try to get a realistic image
+    # #    The discriminator trains much better than the generator. How to solve this? Decrease n, Increase gradient penalty? Decrease discriminator loss (Increasing generator loss will likely not help)
+    # m.change_coeff([0,0,1,10,1,0,1])
+    # m.train()
