@@ -152,6 +152,13 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Ignore VScode settings
+.vscode
+/.vscode/*.code-workspace
+
+# VS Code files for those working on multiple tools
+*.code-workspace
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
